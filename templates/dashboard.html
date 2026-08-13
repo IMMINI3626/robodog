@@ -79,6 +79,12 @@
     background: #000;
   }
 
+  .left-col {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
   .right-col {
     display: flex;
     flex-direction: column;
@@ -214,8 +220,16 @@
 </div>
 
 <div class="layout">
-  <div class="video-card">
-    <img src="/video_feed" alt="live camera">
+  <div class="left-col">
+    <div class="tile" id="firePhotoCard">
+      <div class="label">화재 현장 사진</div>
+      <div class="value text-good" id="firePhotoPlaceholder">화재 발생하지 않음</div>
+      <img id="firePhotoImg" style="width:100%; border-radius:6px; margin-top:6px; display:none;" alt="fire snapshot">
+      <div class="sub" id="firePhotoTime"></div>
+      <button id="clearPhotoBtn" style="display:none; margin-top:8px; width:100%; padding:8px; border:1px solid var(--border); border-radius:8px; background:var(--surface); color:var(--ink-2); font-size:13px; cursor:pointer;">
+        화재 진압 완료 (사진 삭제)
+      </button>
+    </div>
   </div>
 
   <div class="right-col">
@@ -271,6 +285,8 @@
 <div class="footer">1초마다 자동 갱신 · <span id="lastUpdate">-</span></div>
 
 <script>
+let _lastPhotoPath = null;
+
 function riskBand(v) {
   if (v == null) return "good";
   if (v >= 66) return "critical";
@@ -381,8 +397,34 @@ async function refresh() {
     badge.className = "badge idle";
   }
 
+  // ---- Fire photo (only re-fetch the image when the file actually changes) ----
+  const firePhotoImg = document.getElementById("firePhotoImg");
+  const firePhotoPlaceholder = document.getElementById("firePhotoPlaceholder");
+  const clearPhotoBtn = document.getElementById("clearPhotoBtn");
+  if (data.photo_path) {
+    firePhotoPlaceholder.style.display = "none";
+    firePhotoImg.style.display = "block";
+    clearPhotoBtn.style.display = "block";
+    if (data.photo_path !== _lastPhotoPath) {
+      _lastPhotoPath = data.photo_path;
+      firePhotoImg.src = "/fire_photo.jpg?t=" + Date.now();
+    }
+    document.getElementById("firePhotoTime").textContent = "촬영 시각: " + (data.last_sensor_update || "-");
+  } else {
+    firePhotoPlaceholder.style.display = "";
+    firePhotoImg.style.display = "none";
+    clearPhotoBtn.style.display = "none";
+    document.getElementById("firePhotoTime").textContent = "";
+    _lastPhotoPath = null;
+  }
+
   document.getElementById("lastUpdate").textContent = data.last_sensor_update || "-";
 }
+
+document.getElementById("clearPhotoBtn").addEventListener("click", async () => {
+  await fetch("/clear_fire_photo", { method: "POST" });
+  refresh();
+});
 
 setInterval(refresh, 1000);
 refresh();

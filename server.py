@@ -17,7 +17,7 @@ from collections import deque
 from datetime import datetime
 
 import cv2
-from flask import Flask, Response, jsonify, render_template, request
+from flask import Flask, Response, jsonify, render_template, request, send_file
 
 from tools import RoboDog, STOP
 
@@ -28,8 +28,7 @@ from tools import RoboDog, STOP
 DOG_COM_PORT = "COM4"      # 로보독 무선 동글이 잡는 COM 포트
 DOG_PATROL_SPEED = 30      # 평상시 순찰 이동 속도
 
-CAMERA_SOURCE = 0          # 개발용 PC 웹캠.
-                           # 폰 IP웹캠 연동 시 "http://<폰IP>:포트/video" 로 교체 (작업 8, 추후 진행)
+CAMERA_SOURCE = "http://admin:admin@192.168.0.19:8081/"  # 아이폰 IP Camera 앱 스트림. 폰 IP 바뀌면 여기 수정
 
 FLAME_FIRE_VALUE = 1       # ESP32가 화재 감지 시 보내는 값(0/1로 정규화해서 보내도록 펌웨어에서 처리)
 GAS_ALERT_THRESHOLD = 500  # 가스 센서 경보 임계값 - 실측 후 보정 필요
@@ -53,6 +52,7 @@ MOCK_SENSORS = os.environ.get("MOCK_SENSORS", "0") == "1"  # ESP32 없이 테스
 
 ENABLE_OCR = os.environ.get("ENABLE_OCR", "1") == "1"  # EasyOCR 로딩이 무거워서 끄고 싶을 때 "0"
 OCR_INTERVAL_SECONDS = 1.0
+OCR_SCALE = 0.5  # OCR 처리용으로 프레임을 이 비율로 축소 (속도 개선, 너무 작으면 인식률 떨어짐)
 PLATE_PATTERN = re.compile(r"\d{2,3}[가-힣]\d{4}")
 
 logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(message)s")
@@ -252,15 +252,26 @@ _latest_frame = None
 
 def camera_worker():
     global _latest_frame
-    cap = cv2.VideoCapture(CAMERA_SOURCE)
-    if not cap.isOpened():
-        log.warning("카메라(%s)를 열 수 없습니다.", CAMERA_SOURCE)
-        return
+    cap = None
     while True:
+        if cap is None:
+            cap = cv2.VideoCapture(CAMERA_SOURCE)
+            if not cap.isOpened():
+                log.warning("카메라(%s)를 열 수 없습니다. 5초 후 재시도.", CAMERA_SOURCE)
+                cap.release()
+                cap = None
+                time.sleep(5)
+                continue
+            log.info("카메라 연결됨: %s", CAMERA_SOURCE)
+
         ok, frame = cap.read()
         if not ok:
-            time.sleep(0.5)
+            log.warning("카메라 프레임 읽기 실패. 재연결 시도.")
+            cap.release()
+            cap = None
+            time.sleep(2)
             continue
+
         with _frame_lock:
             _latest_frame = frame
         time.sleep(0.03)
@@ -309,12 +320,28 @@ def ocr_worker():
         frame = _get_frame_copy()
         if frame is not None:
             try:
-                for _, text, _conf in reader.readtext(frame):
+                small = cv2.resize(frame, (0, 0), fx=OCR_SCALE, fy=OCR_SCALE)
+                results = reader.readtext(small)
+                if results:
+                    log.info("OCR 인식: %s", [(text, round(conf, 2)) for _, text, conf in results])
+
+                found = None
+                for _, text, _conf in results:
                     match = PLATE_PATTERN.search(text.replace(" ", ""))
                     if match:
-                        with _state_lock:
-                            state["plate_number"] = match.group()
+                        found = match.group()
                         break
+
+                # 번호판이 여러 텍스트 조각으로 나뉘어 인식된 경우 (예: "12가" / "3456") 합쳐서 재시도
+                if found is None and results:
+                    combined = "".join(text for _, text, _conf in results).replace(" ", "")
+                    match = PLATE_PATTERN.search(combined)
+                    if match:
+                        found = match.group()
+
+                if found:
+                    with _state_lock:
+                        state["plate_number"] = found
             except Exception:
                 log.exception("OCR 처리 실패")
         time.sleep(OCR_INTERVAL_SECONDS)
@@ -389,6 +416,30 @@ def snapshot():
     if not ok:
         return ("encode error", 500)
     return Response(buf.tobytes(), mimetype="image/jpeg")
+
+
+@app.route("/fire_photo.jpg")
+def fire_photo():
+    path = get_state().get("photo_path")
+    if not path or not os.path.exists(path):
+        return ("no photo", 404)
+    return send_file(path, mimetype="image/jpeg")
+
+
+@app.route("/clear_fire_photo", methods=["POST"])
+def clear_fire_photo():
+    """화재 진압 완료 처리: 사진 삭제 + 센서값 정상화 + 로보독 순찰 재개."""
+    with _state_lock:
+        path = state.get("photo_path")
+        state["photo_path"] = None
+    if path and os.path.exists(path):
+        try:
+            os.remove(path)
+        except OSError:
+            log.exception("사진 삭제 실패: %s", path)
+
+    update_state(flame=0, gas=0)
+    return jsonify({"ok": True})
 
 
 @app.route("/video_feed")
