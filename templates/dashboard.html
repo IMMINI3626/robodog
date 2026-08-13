@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>로보독 화재 대응 대시보드</title>
+<style>
+  :root {
+    color-scheme: light;
+    --page:      #f9f9f7;
+    --surface:   #fcfcfb;
+    --border:    rgba(11,11,11,0.10);
+    --ink:       #0b0b0b;
+    --ink-2:     #52514e;
+    --muted:     #898781;
+    --track:     #e1e0d9;
+
+    --good:      #0ca30c;
+    --warning:   #fab219;
+    --critical:  #d03b3b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--page);
+    color: var(--ink);
+    font-family: system-ui, -apple-system, "Segoe UI", "Malgun Gothic", sans-serif;
+    padding: 16px;
+  }
+  h1 {
+    font-size: 18px;
+    font-weight: 600;
+    margin: 0 0 12px;
+    color: var(--ink-2);
+  }
+
+  /* ---- Hero status banner ---- */
+  .hero {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 16px 18px;
+    border-radius: 10px;
+    margin-bottom: 16px;
+    color: #fff;
+    font-weight: 600;
+    font-size: 22px;
+  }
+  .hero.good { background: var(--good); }
+  .hero.warning { background: var(--warning); color: var(--ink); }
+  .hero.critical { background: var(--critical); }
+  .hero .icon { font-size: 26px; }
+  .hero .sub {
+    font-size: 13px;
+    font-weight: 400;
+    margin-left: auto;
+    opacity: 0.9;
+  }
+
+  /* ---- Layout ---- */
+  .layout {
+    display: grid;
+    grid-template-columns: minmax(280px, 1.1fr) minmax(280px, 1fr);
+    gap: 16px;
+    align-items: start;
+  }
+  @media (max-width: 720px) {
+    .layout { grid-template-columns: 1fr; }
+  }
+  .video-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  .video-card img {
+    width: 100%;
+    display: block;
+    background: #000;
+  }
+
+  .right-col {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  /* ---- Stat tiles (KPI row) ---- */
+  .kpi-row {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+  }
+  .tile {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 12px;
+  }
+  .tile .label {
+    font-size: 12px;
+    color: var(--muted);
+    margin-bottom: 3px;
+  }
+  .tile .value {
+    font-size: 20px;
+    font-weight: 600;
+    line-height: 1.2;
+  }
+  .tile .sub {
+    font-size: 11px;
+    color: var(--ink-2);
+    margin-top: 2px;
+  }
+  .tile .delta {
+    font-size: 12px;
+    margin-top: 2px;
+    font-weight: 600;
+  }
+  .status-icon { margin-right: 4px; }
+  .text-good { color: var(--good); }
+  .text-warning { color: #9a6b00; } /* darker than --warning for AA text-on-white */
+  .text-critical { color: var(--critical); }
+  .text-muted { color: var(--muted); font-weight: 400; }
+
+  /* ---- Meter (fire risk index) ---- */
+  .meter-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 14px;
+  }
+  .meter-card .top-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 8px;
+  }
+  .meter-card .label { font-size: 12px; color: var(--muted); }
+  .meter-card .value { font-size: 22px; font-weight: 600; }
+  .meter-track {
+    height: 14px;
+    background: var(--track);
+    border-radius: 7px;
+    overflow: hidden;
+  }
+  .meter-fill {
+    height: 100%;
+    border-radius: 7px;
+    width: 0%;
+    transition: width 0.3s ease;
+  }
+  .meter-fill.good { background: var(--good); }
+  .meter-fill.warning { background: var(--warning); }
+  .meter-fill.critical { background: var(--critical); }
+
+  /* ---- Blocking vehicle plate ---- */
+  .plate-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px;
+    text-align: center;
+    border-left: 4px solid var(--track);
+  }
+  .plate-card.active { border-left-color: var(--critical); }
+  .plate-card .label {
+    font-size: 12px;
+    color: var(--muted);
+    margin-bottom: 4px;
+  }
+  .plate-card .value {
+    font-size: 28px;
+    font-weight: 700;
+    letter-spacing: 1px;
+  }
+  .plate-card .value.empty {
+    font-size: 15px;
+    font-weight: 400;
+    color: var(--muted);
+  }
+
+  /* ---- Notify badge ---- */
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 12px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    width: fit-content;
+  }
+  .badge.critical { background: #fbeaea; color: #9a2323; }
+  .badge.warning { background: #fdf3dc; color: #7a5400; }
+  .badge.idle { background: var(--track); color: var(--ink-2); font-weight: 400; }
+
+  .footer {
+    margin-top: 12px;
+    font-size: 12px;
+    color: var(--muted);
+    text-align: right;
+  }
+</style>
+</head>
+<body>
+
+<h1>로보독 화재 대응 대시보드</h1>
+
+<div class="hero good" id="hero">
+  <span class="icon" id="heroIcon">✅</span>
+  <span id="heroText">정상 순찰 중</span>
+  <span class="sub" id="heroSub"></span>
+</div>
+
+<div class="layout">
+  <div class="video-card">
+    <img src="/video_feed" alt="live camera">
+  </div>
+
+  <div class="right-col">
+    <div class="kpi-row">
+      <div class="tile">
+        <div class="label">로보독</div>
+        <div class="value" id="dogStatus">-</div>
+      </div>
+      <div class="tile">
+        <div class="label">불꽃 센서</div>
+        <div class="value" id="flame">-</div>
+      </div>
+      <div class="tile">
+        <div class="label">온도</div>
+        <div class="value" id="temp">-</div>
+        <div class="delta" id="tempDelta"></div>
+      </div>
+      <div class="tile">
+        <div class="label">습도</div>
+        <div class="value" id="humidity">-</div>
+      </div>
+    </div>
+
+    <div class="meter-card">
+      <div class="top-row">
+        <span class="label">화재위험지수</span>
+        <span class="value" id="riskValue">-</span>
+      </div>
+      <div class="meter-track"><div class="meter-fill good" id="riskFill"></div></div>
+    </div>
+
+    <div class="kpi-row">
+      <div class="tile">
+        <div class="label">가스 농도</div>
+        <div class="value" id="gas">-</div>
+      </div>
+      <div class="tile">
+        <div class="label">통로 폭</div>
+        <div class="value" id="narrow">-</div>
+        <div class="sub" id="distSub"></div>
+      </div>
+    </div>
+
+    <div class="plate-card" id="plateCard">
+      <div class="label">통행방해 차량 번호판</div>
+      <div class="value empty" id="blockingPlate">감지된 차량 없음</div>
+    </div>
+
+    <div class="badge idle" id="notifyBadge">알림 없음</div>
+  </div>
+</div>
+
+<div class="footer">1초마다 자동 갱신 · <span id="lastUpdate">-</span></div>
+
+<script>
+function riskBand(v) {
+  if (v == null) return "good";
+  if (v >= 66) return "critical";
+  if (v >= 34) return "warning";
+  return "good";
+}
+
+async function refresh() {
+  let data;
+  try {
+    const res = await fetch("/status");
+    data = await res.json();
+  } catch (e) {
+    return;
+  }
+
+  // ---- Hero status: critical > warning > good ----
+  const hero = document.getElementById("hero");
+  const heroIcon = document.getElementById("heroIcon");
+  const heroText = document.getElementById("heroText");
+  const heroSub = document.getElementById("heroSub");
+
+  const risk = data.fire_risk_index;
+  const isWarning = data.narrow_passage || data.temp_trend_alert || riskBand(risk) === "warning";
+
+  if (data.fire_alert) {
+    hero.className = "hero critical";
+    heroIcon.textContent = "🔥";
+    heroText.textContent = "화재/가스 감지 - 로보독 정지";
+    heroSub.textContent = data.alert_reason ? "(" + data.alert_reason + ")" : "";
+  } else if (isWarning) {
+    hero.className = "hero warning";
+    heroIcon.textContent = "⚠️";
+    heroText.textContent = "주의 - 이상 징후 감지";
+    const reasons = [];
+    if (data.narrow_passage) reasons.push("통로 좁음");
+    if (data.temp_trend_alert) reasons.push("온도 급상승");
+    if (riskBand(risk) === "warning") reasons.push("위험지수 상승");
+    heroSub.textContent = reasons.join(" · ");
+  } else {
+    hero.className = "hero good";
+    heroIcon.textContent = "✅";
+    heroText.textContent = "정상 순찰 중";
+    heroSub.textContent = "";
+  }
+
+  // ---- KPI tiles ----
+  document.getElementById("dogStatus").textContent =
+    data.dog_status === "patrol" ? "순찰 중" : data.dog_status === "stopped" ? "정지" : "알 수 없음";
+
+  const flameEl = document.getElementById("flame");
+  flameEl.textContent = data.flame ? "감지됨" : "정상";
+  flameEl.className = "value " + (data.flame ? "text-critical" : "text-good");
+
+  document.getElementById("temp").textContent = data.temp != null ? data.temp + " °C" : "-";
+  const deltaEl = document.getElementById("tempDelta");
+  if (data.temp_trend_c_per_min == null) {
+    deltaEl.textContent = "";
+  } else {
+    const t = data.temp_trend_c_per_min;
+    const arrow = t > 0 ? "▲" : t < 0 ? "▼" : "─";
+    deltaEl.textContent = arrow + " " + Math.abs(t) + " °C/분";
+    deltaEl.className = "delta " + (data.temp_trend_alert ? "text-warning" : "text-muted");
+  }
+
+  document.getElementById("humidity").textContent = data.humidity != null ? data.humidity + " %" : "-";
+
+  // ---- Risk meter ----
+  const band = riskBand(risk);
+  document.getElementById("riskValue").textContent = risk != null ? risk + " / 100" : "-";
+  const fill = document.getElementById("riskFill");
+  fill.style.width = (risk != null ? risk : 0) + "%";
+  fill.className = "meter-fill " + band;
+
+  // ---- Secondary tiles ----
+  document.getElementById("gas").textContent = data.gas ?? "-";
+
+  const narrowEl = document.getElementById("narrow");
+  narrowEl.textContent = data.narrow_passage ? "좁음" : "정상";
+  narrowEl.className = "value " + (data.narrow_passage ? "text-warning" : "text-good");
+  document.getElementById("distSub").textContent =
+    (data.dist_cm_left != null ? data.dist_cm_left + "cm" : "-") + " / " +
+    (data.dist_cm_right != null ? data.dist_cm_right + "cm" : "-");
+
+  // ---- Blocking vehicle ----
+  const plateCard = document.getElementById("plateCard");
+  const plateEl = document.getElementById("blockingPlate");
+  if (data.blocking_vehicle_plate) {
+    plateCard.classList.add("active");
+    plateEl.textContent = data.blocking_vehicle_plate;
+    plateEl.className = "value";
+  } else {
+    plateCard.classList.remove("active");
+    plateEl.textContent = "감지된 차량 없음";
+    plateEl.className = "value empty";
+  }
+
+  // ---- Notify badge ----
+  const badge = document.getElementById("notifyBadge");
+  if (data.notify_119_sent) {
+    badge.textContent = "🚨 화재/가스 신고 전송됨";
+    badge.className = "badge critical";
+  } else if (data.temp_alert_119_sent) {
+    badge.textContent = "⚠️ 온도 사전경보 전송됨";
+    badge.className = "badge warning";
+  } else {
+    badge.textContent = "알림 없음";
+    badge.className = "badge idle";
+  }
+
+  document.getElementById("lastUpdate").textContent = data.last_sensor_update || "-";
+}
+
+setInterval(refresh, 1000);
+refresh();
+</script>
+
+</body>
+</html>
